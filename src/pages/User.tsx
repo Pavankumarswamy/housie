@@ -18,7 +18,9 @@ import {
   Plus,
   History,
   Send,
-  CreditCard
+  CreditCard,
+  Trash2,
+  RefreshCw
 } from "lucide-react";
 
 const User = () => {
@@ -127,26 +129,33 @@ const User = () => {
     const userId = localStorage.getItem("userId");
     console.log('Loading tickets for user:', userId);
     
-    const { data, error } = await supabase
-      .from("tickets")
-      .select(`
-        *,
-        games!inner(*)
-      `)
-      .eq("user_id", userId)
-      .order("created_at", { ascending: false });
-    
-    if (data) {
-      console.log('Tickets loaded for user:', data);
-      setTickets(data);
-    }
-    if (error) {
+    try {
+      const { data, error } = await supabase
+        .from("tickets")
+        .select(`
+          *,
+          games!inner(*)
+        `)
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false });
+      
+      if (error) {
+        console.error("Error loading tickets:", error);
+        throw error;
+      }
+      
+      if (data) {
+        console.log('Tickets loaded for user:', data);
+        setTickets(data);
+      }
+    } catch (error: any) {
       console.error("Error loading tickets:", error);
       toast({
-        title: "Error",
-        description: "Failed to load tickets",
+        title: "Error Loading Tickets",
+        description: error.message || "Failed to load tickets. Please try again.",
         variant: "destructive",
       });
+      setTickets([]); // Clear tickets on error
     }
   };
 
@@ -187,15 +196,56 @@ const User = () => {
       if (error) throw error;
 
       toast({
-        title: "Ticket Purchased!",
-        description: "Your ticket has been purchased successfully",
+        title: "✅ Ticket Purchased!",
+        description: "Your new ticket has been generated with proper Housie format",
       });
 
-      loadUserData(); // Refresh all data
+      // Refresh all data
+      await loadUserData();
     } catch (error: any) {
       toast({
-        title: "Purchase Failed",
+        title: "❌ Purchase Failed",
         description: error.message || "Failed to purchase ticket",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const deleteUserTicket = async (ticketId: string, gameTitle: string) => {
+    if (!confirm(`⚠️ Delete Your Ticket?\n\nGame: ${gameTitle}\nTicket: #${ticketId.slice(-8)}\n\n⚠️ WARNING:\n• You will NOT get a refund\n• This action cannot be undone\n• You can buy a new ticket if needed\n\nAre you sure you want to delete this ticket?`)) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      console.log('🗑️ User deleting their own ticket:', ticketId);
+      
+      const { error } = await supabase
+        .from('tickets')
+        .delete()
+        .eq('id', ticketId)
+        .eq('user_id', user.id); // Extra security check
+
+      if (error) {
+        console.error('❌ Delete failed:', error);
+        throw error;
+      }
+
+      toast({
+        title: "✅ Ticket Deleted",
+        description: `Your ticket for ${gameTitle} has been deleted successfully.`,
+      });
+
+      // Refresh tickets
+      await loadTickets();
+      
+    } catch (error: any) {
+      console.error('❌ Error deleting user ticket:', error);
+      toast({
+        title: "❌ Delete Failed",
+        description: error.message || "Failed to delete ticket. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -411,8 +461,15 @@ const User = () => {
         {/* Header */}
         <div className="mb-6">
           <h1 className="text-3xl font-bold text-foreground">Welcome, {user.name}!</h1>
-          <div className="flex items-center justify-between mt-2">
-            <p className="text-muted-foreground">PIN: {localStorage.getItem("userPin")}</p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+            <div className="text-left">
+              <p className="text-sm text-muted-foreground">Your PIN</p>
+              <p className="text-lg font-bold text-foreground">{localStorage.getItem("userPin")}</p>
+            </div>
+            <div className="text-center">
+              <p className="text-sm text-muted-foreground">Total Tickets</p>
+              <p className="text-lg font-bold text-blue-600">{tickets.length}</p>
+            </div>
             <div className="text-right">
               <p className="text-sm text-muted-foreground">Wallet Balance</p>
               <p className="text-2xl font-bold text-success">₹{user.wallet.toFixed(2)}</p>
@@ -497,25 +554,37 @@ const User = () => {
                         </div>
                       </div>
                       
-                      <Button 
-                        className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
-                        onClick={() => buyTicket(game.id, game.ticket_price)}
-                        disabled={loading || game.total_tickets >= game.max_tickets || user.wallet < game.ticket_price}
-                      >
-                        {loading ? (
-                          <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground border-r-transparent" />
-                        ) : (
-                          <Ticket className="w-4 h-4 mr-2" />
-                        )}
-                        {game.total_tickets >= game.max_tickets 
-                          ? "Sold Out" 
-                          : user.wallet < game.ticket_price 
-                            ? "Insufficient Balance" 
-                            : game.status === "running" 
-                              ? "Join Game" 
-                              : "Buy Ticket"
-                        }
-                      </Button>
+                      <div className="space-y-2">
+                        {/* Show user's tickets for this game */}
+                        {(() => {
+                          const userTicketsForGame = tickets.filter(t => t.games?.id === game.id);
+                          return userTicketsForGame.length > 0 && (
+                            <div className="text-xs text-blue-600 bg-blue-50 p-2 rounded">
+                              🎫 You have {userTicketsForGame.length} ticket{userTicketsForGame.length > 1 ? 's' : ''} for this game
+                            </div>
+                          );
+                        })()}
+                        
+                        <Button 
+                          className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
+                          onClick={() => buyTicket(game.id, game.ticket_price)}
+                          disabled={loading || game.total_tickets >= game.max_tickets || user.wallet < game.ticket_price}
+                        >
+                          {loading ? (
+                            <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground border-r-transparent" />
+                          ) : (
+                            <Plus className="w-4 h-4 mr-2" />
+                          )}
+                          {game.total_tickets >= game.max_tickets 
+                            ? "Sold Out" 
+                            : user.wallet < game.ticket_price 
+                              ? "Insufficient Balance" 
+                              : game.status === "running" 
+                                ? "Buy Another Ticket" 
+                                : "Buy Ticket"
+                          }
+                        </Button>
+                      </div>
                     </CardContent>
                   </Card>
                 ))}
@@ -537,9 +606,11 @@ const User = () => {
                 <div>
                   <CardTitle className="flex items-center gap-2">
                     <Ticket className="w-5 h-5" />
-                    My Tickets
+                    My Tickets ({tickets.length})
                   </CardTitle>
-                  <CardDescription>View all your purchased tickets</CardDescription>
+                  <CardDescription>
+                    View and manage your purchased tickets. Tickets are auto-updated with proper Housie format.
+                  </CardDescription>
                 </div>
                 <Button
                   variant="outline"
@@ -550,7 +621,7 @@ const User = () => {
                   {loading ? (
                     <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground border-r-transparent" />
                   ) : (
-                    <Clock className="w-4 h-4 mr-2" />
+                    <RefreshCw className="w-4 h-4 mr-2" />
                   )}
                   Refresh
                 </Button>
@@ -562,18 +633,26 @@ const User = () => {
                   <Card key={ticket.id} className="bg-secondary/20 border-border/50">
                     <CardContent className="p-4">
                       <div className="flex justify-between items-start">
-                        <div className="space-y-2">
+                        <div className="space-y-2 flex-1">
                           <div className="flex items-center gap-2">
                             <h3 className="font-semibold">Game #{ticket.games?.id.slice(-6)}</h3>
                             <Badge className={getStatusColor(ticket.games?.status)}>
                               {ticket.games?.status?.charAt(0).toUpperCase() + ticket.games?.status?.slice(1)}
                             </Badge>
+                            {ticket.updated_at && ticket.updated_at !== ticket.created_at && (
+                              <Badge className="bg-green-100 text-green-800 text-xs">
+                                ✨ Updated
+                              </Badge>
+                            )}
                           </div>
                           <div className="text-sm text-muted-foreground">
                             <p>Purchased: {new Date(ticket.created_at).toLocaleString()}</p>
+                            {ticket.updated_at && ticket.updated_at !== ticket.created_at && (
+                              <p className="text-green-600 font-medium">Updated: {new Date(ticket.updated_at).toLocaleString()}</p>
+                            )}
                             <p>Start Time: {new Date(ticket.games?.start_time).toLocaleString()}</p>
                             <p>Ticket Price: ₹{ticket.games?.ticket_price}</p>
-                           <p className="font-medium text-blue-600">15-Number Ticket</p>
+                            <p className="font-medium text-blue-600">Ticket #{ticket.id.slice(-8)} • 15-Number Housie Format</p>
                             {ticket.games?.status === "running" && ticket.games?.game_data?.drawn_numbers && (
                               <p className="text-success font-medium">
                                 Numbers Drawn: {ticket.games.game_data.drawn_numbers.length}/90
@@ -581,7 +660,7 @@ const User = () => {
                             )}
                            {ticket.numbers && (
                              <div className="mt-2">
-                               <p className="text-xs text-muted-foreground mb-1">Your Numbers:</p>
+                               <p className="text-xs text-muted-foreground mb-1">Your Numbers (Proper Housie Format):</p>
                                <div className="flex flex-wrap gap-1">
                                  {(Array.isArray(ticket.numbers) ? 
                                    (Array.isArray(ticket.numbers[0]) ? ticket.numbers.flat() : ticket.numbers) : 
@@ -597,14 +676,27 @@ const User = () => {
                           </div>
                         </div>
                         
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => window.location.href = `/game/${ticket.games?.id}?ticket=${ticket.id}`}
-                        >
-                          <Play className="w-4 h-4 mr-2" />
-                          {ticket.games?.status === "running" ? "Play" : "View"}
-                        </Button>
+                        <div className="flex flex-col gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => window.location.href = `/game/${ticket.games?.id}?ticket=${ticket.id}`}
+                          >
+                            <Play className="w-4 h-4 mr-2" />
+                            {ticket.games?.status === "running" ? "Play" : "View"}
+                          </Button>
+                          
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => deleteUserTicket(ticket.id, `Game #${ticket.games?.id.slice(-6)}`)}
+                            disabled={loading}
+                            className="text-xs"
+                          >
+                            <Trash2 className="w-3 h-3 mr-1" />
+                            Delete
+                          </Button>
+                        </div>
                       </div>
                     </CardContent>
                   </Card>

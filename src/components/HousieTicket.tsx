@@ -1,5 +1,6 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { useState, useEffect } from "react";
+import { convertFlatToGrid } from "@/utils/ticketGenerator";
 
 interface HousieTicketProps {
   numbers: number[];
@@ -22,6 +23,7 @@ const HousieTicket = ({
   
   // Safely handle different data formats and ensure exactly 15 numbers
   let ticketNumbers: number[];
+  let ticketGrid: (number | 0)[][];
   
   try {
     if (!numbers) {
@@ -59,12 +61,116 @@ const HousieTicket = ({
     }
   }
 
-  // Arrange numbers in 3 rows of 5 columns each
-  const ticketGrid = [
-    ticketNumbers.slice(0, 5),
-    ticketNumbers.slice(5, 10),
-    ticketNumbers.slice(10, 15)
-  ];
+  // Convert flat array to proper 3x9 Housie grid format
+  try {
+    if (ticketNumbers.length === 15 && ticketNumbers.some(n => n > 0)) {
+      // Check if this looks like a proper Housie ticket first
+      const validNumbers = ticketNumbers.filter(n => n > 0);
+      const columnRanges = [
+        [1, 9], [10, 19], [20, 29], [30, 39], [40, 49],
+        [50, 59], [60, 69], [70, 79], [80, 90]
+      ];
+      
+      const columnCounts = Array(9).fill(0);
+      let hasColumnOverflow = false;
+      
+      for (const num of validNumbers) {
+        for (let col = 0; col < columnRanges.length; col++) {
+          const [min, max] = columnRanges[col];
+          if (num >= min && num <= max) {
+            columnCounts[col]++;
+            if (columnCounts[col] > 3) {
+              hasColumnOverflow = true;
+            }
+            break;
+          }
+        }
+      }
+      
+      if (hasColumnOverflow) {
+        // This ticket has column overflow, use convertFlatToGrid which will regenerate it
+        console.log('Ticket has column overflow, regenerating proper format');
+        ticketGrid = convertFlatToGrid(validNumbers);
+      } else {
+        // Try to arrange in 3x9 format manually
+        const grid: (number | 0)[][] = Array(3).fill(null).map(() => Array(9).fill(0));
+        const numbersbyColumn: { [col: number]: number[] } = {};
+        
+        // Group numbers by column
+        for (const num of validNumbers) {
+          for (let i = 0; i < columnRanges.length; i++) {
+            const [min, max] = columnRanges[i];
+            if (num >= min && num <= max) {
+              if (!numbersbyColumn[i]) numbersbyColumn[i] = [];
+              numbersbyColumn[i].push(num);
+              break;
+            }
+          }
+        }
+        
+        // Sort numbers within each column
+        for (const col in numbersbyColumn) {
+          numbersbyColumn[col].sort((a, b) => a - b);
+        }
+        
+        // Place numbers ensuring 5 per row
+        const rowCounts = [0, 0, 0];
+        for (const colStr in numbersbyColumn) {
+          const col = parseInt(colStr);
+          const numbers = numbersbyColumn[col];
+          
+          for (const num of numbers) {
+            let bestRow = 0;
+            for (let row = 1; row < 3; row++) {
+              if (rowCounts[row] < rowCounts[bestRow] && rowCounts[row] < 5) {
+                bestRow = row;
+              }
+            }
+            
+            if (rowCounts[bestRow] < 5) {
+              grid[bestRow][col] = num;
+              rowCounts[bestRow]++;
+            }
+          }
+        }
+        
+        ticketGrid = grid;
+      }
+    } else {
+      // Fallback: create a simple 3x5 grid for display
+      ticketGrid = [
+        Array(9).fill(0),
+        Array(9).fill(0),
+        Array(9).fill(0)
+      ];
+      
+      // Place numbers in first 5 columns
+      for (let i = 0; i < Math.min(15, ticketNumbers.length); i++) {
+        const row = Math.floor(i / 5);
+        const col = i % 5;
+        if (row < 3 && ticketNumbers[i] > 0) {
+          ticketGrid[row][col] = ticketNumbers[i];
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error converting to grid:', error);
+    // Fallback: create a simple 3x5 layout in 9-column format
+    ticketGrid = [
+      Array(9).fill(0),
+      Array(9).fill(0),
+      Array(9).fill(0)
+    ];
+    
+    // Place numbers in first 5 columns
+    for (let i = 0; i < Math.min(15, ticketNumbers.length); i++) {
+      const row = Math.floor(i / 5);
+      const col = i % 5;
+      if (row < 3 && ticketNumbers[i] > 0) {
+        ticketGrid[row][col] = ticketNumbers[i];
+      }
+    }
+  }
 
   // Update struck numbers when drawn numbers change
   useEffect(() => {
@@ -84,24 +190,29 @@ const HousieTicket = ({
     if (!onWinDetected) return;
     
     const struckCount = struck.size;
+    const validNumbers = ticketNumbers.filter(num => num > 0);
     
     // Early Five - first 5 numbers struck
-    if (struckCount === 5) {
+    if (struckCount === 5 && !struck.has(-1)) { // -1 flag to prevent multiple early five calls
       onWinDetected('early_five');
+      struck.add(-1); // Mark that early five has been detected
     }
     
     // Check for line wins (any complete row)
+    // For 3x9 grid, each row should have exactly 5 numbers
     ticketGrid.forEach((row, rowIndex) => {
-      const rowComplete = row.every(num => num === 0 || struck.has(num));
-      if (rowComplete && row.some(num => num > 0)) {
+      const rowNumbers = row.filter(num => num > 0);
+      const struckInRow = rowNumbers.filter(num => struck.has(num));
+      
+      // A line is complete when all numbers in that row are struck
+      if (rowNumbers.length > 0 && struckInRow.length === rowNumbers.length) {
         const lineTypes = ['top_line', 'middle_line', 'bottom_line'];
         onWinDetected(lineTypes[rowIndex]);
       }
     });
     
-    // Full House - all 15 numbers struck
-    const validNumbers = ticketNumbers.filter(num => num > 0);
-    if (validNumbers.length > 0 && validNumbers.every(num => struck.has(num))) {
+    // Full House - all valid numbers struck
+    if (validNumbers.length === 15 && validNumbers.every(num => struck.has(num))) {
       onWinDetected('full_house');
     }
   };
@@ -125,15 +236,24 @@ const HousieTicket = ({
           <p className="text-xs text-blue-600 font-medium">15 Numbers</p>
         </div>
 
-        {/* Ticket Grid - 3 rows, 5 columns each */}
+        {/* Ticket Grid - 3 rows × 9 columns (Housie format) */}
         <div className="space-y-1 mb-4">
+          {/* Column headers showing ranges */}
+          <div className="grid grid-cols-9 gap-1 mb-2">
+            {['1-9', '10-19', '20-29', '30-39', '40-49', '50-59', '60-69', '70-79', '80-90'].map((range, index) => (
+              <div key={index} className="text-xs text-center text-gray-500 font-medium">
+                {range}
+              </div>
+            ))}
+          </div>
+          
           {ticketGrid.map((row, rowIndex) => (
-            <div key={rowIndex} className="grid grid-cols-5 gap-1">
+            <div key={rowIndex} className="grid grid-cols-9 gap-1">
               {row.map((num, colIndex) => (
                 <div
                   key={`${rowIndex}-${colIndex}`}
                   className={`
-                    w-12 h-12 flex items-center justify-center text-sm font-bold
+                    w-8 h-8 flex items-center justify-center text-xs font-bold
                     border-2 rounded transition-all duration-300
                     ${num === 0 
                       ? 'bg-gray-100 text-gray-300 border-gray-200' 

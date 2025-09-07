@@ -7,6 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import BottomNavigation from "@/components/BottomNavigation";
+import AdminGameTickets from "@/components/AdminGameTickets";
+import AdminTicketMigration from "@/components/AdminTicketMigration";
 import { 
   Trophy, 
   Users, 
@@ -643,13 +645,18 @@ const Admin = () => {
                         </div>
                       </div>
                       <div className="flex gap-2">
+                        <AdminGameTickets
+                          gameId={game.id}
+                          gameStatus={game.status}
+                          drawnNumbers={game.game_data?.drawn_numbers || []}
+                        />
                         <Button
                           variant="outline"
                           size="sm"
                           onClick={() => window.location.href = `/game/${game.id}`}
                         >
                           <Eye className="w-4 h-4 mr-2" />
-                          View
+                          View Game
                         </Button>
                         
                         {game.status === "waiting" && (
@@ -970,17 +977,20 @@ const Admin = () => {
         )}
 
         {activeTab === "settings" && (
-          <Card className="bg-card/50 border-border/50 max-w-md mx-auto">
-            <CardHeader>
-              <CardTitle>Admin Settings</CardTitle>
-              <CardDescription>Configure platform settings</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="text-center py-8 text-muted-foreground">
-                Settings panel coming soon...
-              </div>
-            </CardContent>
-          </Card>
+          <div className="space-y-6">
+            <AdminTicketMigration />
+            <Card className="bg-card/50 border-border/50 max-w-md mx-auto">
+              <CardHeader>
+                <CardTitle>Admin Settings</CardTitle>
+                <CardDescription>Configure platform settings</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="text-center py-8 text-muted-foreground">
+                  Additional settings coming soon...
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         )}
       </div>
 
